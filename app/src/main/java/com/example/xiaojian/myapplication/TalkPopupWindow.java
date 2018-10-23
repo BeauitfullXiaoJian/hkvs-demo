@@ -10,7 +10,6 @@ import android.view.ViewGroup;
 import android.widget.PopupWindow;
 import android.widget.Toast;
 
-import com.hik.mcrsdk.talk.TalkClientSDK;
 import com.hikvision.sdk.VMSNetSDK;
 import com.hikvision.sdk.net.business.OnVMSNetSDKBusiness;
 
@@ -80,6 +79,6 @@ public class TalkPopupWindow extends PopupWindow implements View.OnTouchListener
     }
 
     private  void showToast(String message){
-        Toast.makeText(mParentActivity.getApplicationContext(),message,Toast.LENGTH_SHORT);
+        Toast.makeText(mParentActivity.getApplicationContext(),message,Toast.LENGTH_SHORT).show();
     }
 }

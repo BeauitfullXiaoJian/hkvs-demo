@@ -1,9 +1,9 @@
 package com.example.xiaojian.myapplication;
 
 import android.animation.ValueAnimator;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
+import android.content.Intent;
+import android.content.pm.ActivityInfo;
+import android.content.res.Configuration;
 import android.graphics.drawable.Drawable;
 import android.os.AsyncTask;
 import android.os.Handler;
@@ -18,15 +18,14 @@ import android.util.Log;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
-import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.view.animation.AlphaAnimation;
 import android.view.animation.Animation;
 import android.view.animation.RotateAnimation;
 import android.widget.ImageView;
-import android.widget.PopupMenu;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -157,9 +156,41 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
         mPlayView = findViewById(R.id.play_view);
         findView();
-        initView();
         initEvent();
-        initSDK();
+        if (savedInstanceState == null) {
+            mCameras.add(new CameraData("7249206d05e4414bbeffd74e714a407a", "收银台", "https://picsum.photos/600/400?100", true));
+            mCameras.add(new CameraData("fcdd5bcafd1c4f4cbefd6d542b33f213", "大门口", "https://picsum.photos/600/400?200", true));
+            mCameras.add(new CameraData("00005", "杂物间", "https://picsum.photos/600/360?500", false));
+            initData();
+            initView();
+            initSDK();
+        } else {
+            String jsonString = savedInstanceState.getString(TAG);
+            String cameraSn = savedInstanceState.getString(TAG + "ACTIVE", "NONE");
+            mCameras = new CameraData().getCardListFromJsonString(jsonString);
+            if(!cameraSn.equals("NONE")){
+                mActiveCamera = new CameraData(cameraSn);
+            }
+            initData();
+            initView();
+            mPlayHandler.sendEmptyMessage(0);
+        }
+    }
+
+    @Override
+    public void onSaveInstanceState(@NonNull Bundle outState) {
+        Log.d(TAG, "SAVE_DATA");
+        super.onSaveInstanceState(outState);
+        outState.putSerializable(TAG, new CameraData().cardListToJsonString(mCameras));
+        if (mActiveCamera != null) {
+            outState.putSerializable(TAG + "ACTIVE", mActiveCamera.getCameraSns());
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        VMSNetSDK.getInstance().stopLiveOpt(PLAY_WINDOW_NO);
     }
 
     /**
@@ -183,17 +214,22 @@ public class MainActivity extends AppCompatActivity {
      * 初始化视图
      */
     private void initView() {
-        mCameras.add(new CameraData("7249206d05e4414bbeffd74e714a407a", "收银台", "https://picsum.photos/600/400?100", true));
-        mCameras.add(new CameraData("fcdd5bcafd1c4f4cbefd6d542b33f213", "大门口", "https://picsum.photos/600/400?200", true));
-//        mCameras.add(new CameraData("00003", "杂物间", "https://picsum.photos/600/360?300", true));
-//        mCameras.add(new CameraData("00004", "厨房", "https://picsum.photos/600/360?400", true));
-        mCameras.add(new CameraData("00005", "杂物间", "https://picsum.photos/600/360?500", false));
 
         // 填充列表
         GridLayoutManager layoutManager = new GridLayoutManager(getBaseContext(), 2);
         CardAdapter adapter = new CardAdapter();
         mCameraListView.setLayoutManager(layoutManager);
         mCameraListView.setAdapter(adapter);
+
+        // 根据横屏竖屏调整样式
+        Configuration mConfiguration = getResources().getConfiguration();
+        ViewGroup.LayoutParams layoutParams = mPlayContainerView.getLayoutParams();
+        if (mConfiguration.orientation == mConfiguration.ORIENTATION_LANDSCAPE) {
+            layoutParams.height = ViewGroup.LayoutParams.MATCH_PARENT;
+            // 收起状态栏
+            this.getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                    WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        }
     }
 
     /**
@@ -325,9 +361,66 @@ public class MainActivity extends AppCompatActivity {
             public void onClick(View v) {
                 new TalkPopupWindow(MainActivity.this)
                         .showAtLocation(findViewById(R.id.main_view),
-                                Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL, 0, 0);
+                                Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, 0);
             }
         });
+
+        // 显示控制菜单
+        findViewById(R.id.menu_control).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                new ControlPopupWindow(MainActivity.this)
+                        .showAtLocation(findViewById(R.id.main_view),
+                                Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, 0);
+            }
+        });
+
+        // 显示截图弹窗
+        findViewById(R.id.menu_cut).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                String picturePath = getCapture(System.currentTimeMillis() + ".jpg");
+                new CutPopupWindow(MainActivity.this, picturePath)
+                        .showAtLocation(findViewById(R.id.main_view),
+                                Gravity.TOP | Gravity.CENTER_HORIZONTAL, 0, 0);
+            }
+        });
+
+        // 显示全屏播放
+        findViewById(R.id.btn_fullscreen).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Configuration mConfiguration = getResources().getConfiguration();
+                if (mConfiguration.orientation == mConfiguration.ORIENTATION_LANDSCAPE) {
+                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+                } else {
+                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+                }
+            }
+        });
+    }
+
+    /**
+     * 初始化数据
+     */
+    private void initData() {
+        if (mActiveCamera != null){
+            Log.d(TAG,"恢复之前选中的摄像头");
+            for (CameraData cameraData : mCameras) {
+                if (cameraData.getCameraSns().equals(mActiveCamera.getCameraSns())) {
+                    mActiveCamera = cameraData;
+                    break;
+                }
+            }
+        }else{
+            Log.d(TAG,"默认选中第一个处于积极状态的摄像头作为播放摄像头");
+            for (CameraData cameraData : mCameras) {
+                if (cameraData.getOnline()) {
+                    mActiveCamera = cameraData;
+                    break;
+                }
+            }
+        }
     }
 
     /**
@@ -368,13 +461,6 @@ public class MainActivity extends AppCompatActivity {
                     @Override
                     public void onSuccess(Object o) {
                         Log.d(TAG, "登入成功");
-                        // 默认选中第一个处于积极状态的摄像头作为播放摄像头
-                        for (CameraData cameraData : mCameras) {
-                            if (cameraData.getOnline()) {
-                                mActiveCamera = cameraData;
-                                break;
-                            }
-                        }
                         // 尝试播放视频
                         mPlayHandler.sendEmptyMessage(0);
                     }
@@ -396,7 +482,7 @@ public class MainActivity extends AppCompatActivity {
         String savePath = FileUtils.getPictureDirPath().getAbsolutePath();
         String filePath = savePath + "/" + fileName;
 
-        Log.d(TAG, "图片保存地址:" + savePath);
+        Log.d(TAG, "图片保存地址:" + filePath);
 
         Integer opt = VMSNetSDK.getInstance().captureLiveOpt(PLAY_WINDOW_NO, savePath, fileName);
 
@@ -426,7 +512,7 @@ public class MainActivity extends AppCompatActivity {
         @Override
         protected Boolean doInBackground(String... cameraSns) {
             // 清晰度（码率）
-            int sysCode = SDKConstant.LiveSDKConstant.MAIN_HIGH_STREAM;
+            int sysCode = SDKConstant.LiveSDKConstant.SUB_STREAM;
             // 设备号
             String camSn = cameraSns[0];
             // 播放任务接收器
@@ -533,7 +619,7 @@ public class MainActivity extends AppCompatActivity {
                         VMSNetSDK.getInstance().stopLiveOpt(PLAY_WINDOW_NO);
                     }
                     // 之前暂停了摄像头
-                    else{
+                    else {
                         showVideoLoading();
                     }
                     mPlayHandler.sendEmptyMessage(0);
@@ -544,43 +630,4 @@ public class MainActivity extends AppCompatActivity {
             }
         }
     }
-
-    /**
-     * 摄像机数据
-     */
-    protected class CameraData {
-
-        // 设备编号（用于播放）
-        private String cameraSns;
-        // 设备描述，标题
-        private String cameraTitle;
-        // 设备快照资源地址
-        private String snapshotUrl;
-        // 设备状态
-        private Boolean online;
-
-        CameraData(String cameraSns, String cameraTitle, String snapshotUrl, Boolean isOnline) {
-            this.cameraSns = cameraSns;
-            this.cameraTitle = cameraTitle;
-            this.snapshotUrl = snapshotUrl;
-            this.online = isOnline;
-        }
-
-        String getCameraSns() {
-            return cameraSns;
-        }
-
-        String getCameraTitle() {
-            return cameraTitle;
-        }
-
-        String getSnapshotUrl() {
-            return snapshotUrl;
-        }
-
-        Boolean getOnline() {
-            return online;
-        }
-    }
-
 }
